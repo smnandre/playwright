@@ -1,125 +1,140 @@
-# Handling Authentication
+# Handling authentication
 
-Most web applications require users to log in. Automating this process is a fundamental requirement for any end-to-end
-testing suite. Playwright for PHP provides powerful and flexible tools to handle authentication efficiently.
+Authentication is test setup unless authentication itself is the behavior under
+test. Test login, logout, password reset, and identity-provider redirects in
+dedicated scenarios. For an already-authenticated feature, reuse a saved state
+file in a fresh browser context.
 
-There are two primary strategies for handling authentication in your tests:
+## Choose the strategy
 
-1. **UI Login:** Perform a login by interacting with the login form, just as a user would.
-2. **Reusing Authentication State:** Log in once, save the session state, and then reuse it across multiple tests. *
-   *This is the recommended approach for most scenarios.**
+Use the UI login flow when the login experience is the contract being tested.
+Use saved state when authentication is only a prerequisite for a dashboard,
+checkout, administration, or role-specific workflow.
 
-## Strategy 1: UI Login
+This distinction keeps feature failures meaningful. A billing test should not
+fail only because a login provider changed its markup.
 
-This strategy is straightforward and is most useful when you are specifically testing the login and logout functionality
-of your application.
+## Test login through the UI
 
-The implementation involves navigating to the login page, filling in the credentials, and submitting the form.
+Assert a stable authenticated state before treating a login as successful:
 
 ```php
-public function testUserCanLogIn(): void
-{
-    $this->page->goto('https://my-app.com/login');
+use function Playwright\Testing\expect;
 
-    $this->page->locator('#username')->fill('test-user');
-    $this->page->locator('#password')->fill('password123');
-    $this->page->locator('button[type="submit"]')->click();
+$page->goto('https://app.example.test/login');
 
-    // Assert that the user is redirected to the dashboard
-    expect($this->page)->toHaveURL('https://my-app.com/dashboard');
-}
+$page->getByLabel('Email')->fill('editor@example.test');
+$page->getByLabel('Password')->fill(getenv('TEST_USER_PASSWORD') ?: 'secret');
+$page->getByRole('button', ['name' => 'Sign in'])->click();
+
+$page->waitForURL('**/dashboard', ['timeout' => 15000]);
+expect($page->getByRole('heading', ['name' => 'Dashboard']))->toBeVisible();
 ```
 
-While simple, this approach can be slow if you need to log in before every single test.
+Prefer `getByLabel()` and `getByRole()` over CSS selectors. They describe the
+user-facing control and make missing accessible names visible in a failure.
 
-## Strategy 2: Reusing Authentication State (Recommended)
+## Save a state file
 
-A much faster and more reliable approach is to separate the login process from your tests. You log in once, save the
-browser's session state (which includes cookies and local storage), and then load this state into a new browser context
-for each test. This way, your tests can start in an already authenticated state.
-
-### Step 1: Create a Script to Save the State
-
-First, you need a standalone script that performs the login and saves the authentication state to a file. You only need
-to run this script once, or whenever your login credentials change.
-
-**`setup_auth.php`**
+Log in once in a setup script, then save the context's cookies and local
+storage:
 
 ```php
 <?php
+
+declare(strict_types=1);
+
 require __DIR__.'/vendor/autoload.php';
+
 use Playwright\Playwright;
+
+$statePath = __DIR__.'/.auth/editor.json';
+is_dir(dirname($statePath)) || mkdir(dirname($statePath), 0700, true);
 
 $context = Playwright::chromium();
 $page = $context->newPage();
 
-$page->goto('https://my-app.com/login');
-$page->locator('#username')->fill('test-user');
-$page->locator('#password')->fill('password123');
-$page->locator('button[type="submit"]')->click();
+$page->goto('https://app.example.test/login');
+$page->getByLabel('Email')->fill(getenv('TEST_USER_EMAIL') ?: 'editor@example.test');
+$page->getByLabel('Password')->fill(getenv('TEST_USER_PASSWORD') ?: 'secret');
+$page->getByRole('button', ['name' => 'Sign in'])->click();
+$page->waitForURL('**/dashboard', ['timeout' => 15000]);
 
-// Wait for the navigation to the dashboard to complete
-$page->waitForURL('**/dashboard');
-
-// Save the storage state to a file
-$context->saveStorageState(__DIR__.'/auth.json');
-
+$context->saveStorageState($statePath);
 $context->close();
-
-echo "Authentication state saved successfully to auth.json\n";
 ```
 
-Run this script from your terminal: `php setup_auth.php`.
+Commit the script, not the generated state file. It can contain session
+cookies and local-storage tokens. Put the state directory in `.gitignore`
+unless its contents are deliberately safe, fake fixtures.
 
-### Step 2: Load the State in Your Tests
+## Load state into an isolated context
 
-Now, you can configure your `PlaywrightTestCase` to use this saved state. The easiest way is to create a base test case
-for your authenticated tests that overrides the `setUp` method.
-
-**`AuthenticatedTestCase.php`**
+Reuse the file, not a live browser context. Each scenario still needs its own
+context so cookies, local storage, permissions, routes, downloads, and open
+pages cannot leak to the next test.
 
 ```php
-<?php
-namespace App\Tests;
+use Playwright\PlaywrightFactory;
 
-use Playwright\Testing\PlaywrightTestCase;
+$playwright = PlaywrightFactory::create();
+$browser = $playwright->chromium()->launch();
 
-abstract class AuthenticatedTestCase extends PlaywrightTestCase
+$context = $browser->newContext([
+    'storageState' => __DIR__.'/.auth/editor.json',
+]);
+$page = $context->newPage();
+
+$page->goto('https://app.example.test/dashboard');
+```
+
+For trait-backed PHPUnit tests, load the state after calling
+`setUpPlaywright()`:
+
+```php
+protected function setUp(): void
 {
-    protected function setUp(): void
-    {
-        parent::setUp();
-
-        // Load the saved authentication state before each test
-        $this->context->loadStorageState(__DIR__.'/../auth.json');
-    }
+    parent::setUp();
+    $this->setUpPlaywright();
+    $this->context->loadStorageState(__DIR__.'/../.auth/editor.json');
 }
 ```
 
-Now, any test that extends `AuthenticatedTestCase` will start as a logged-in user.
+Use one file per meaningful product role, such as `admin`, `editor`, or
+`customer`. A separate role makes authorization failures easier to understand.
 
-**`ProfilePageTest.php`**
+## Cookies and expired state
+
+For a local application with a test-only session fixture, adding a cookie to a
+context can be simpler than going through the UI:
 
 ```php
-<?php
-namespace App\Tests;
-
-use function Playwright\Testing\expect;
-
-class ProfilePageTest extends AuthenticatedTestCase
-{
-    public function testUserProfileShowsCorrectUsername(): void
-    {
-        // No need to log in here; we are already authenticated.
-        $this->page->goto('https://my-app.com/profile');
-
-        expect($this->page->locator('.username-display'))->toHaveText('test-user');
-    }
-}
+$context->addCookies([
+    [
+        'name' => 'session',
+        'value' => $testSessionId,
+        'domain' => 'app.example.test',
+        'path' => '/',
+        'httpOnly' => true,
+        'secure' => true,
+        'sameSite' => 'Lax',
+    ],
+]);
 ```
 
-### When to Use Each Strategy
+The fixture should create a real server-side session. Do not make browser tests
+depend on how the application encodes tokens.
 
-* Use **UI Login** when you are specifically testing the login, password-reset, or logout features.
-* Use **Reusing Authentication State** for all other tests that require an authenticated user. It will make your test
-  suite significantly faster and more stable.
+Saved state expires. Cookies can time out, a deployment can invalidate a
+session, and an identity provider can rotate tokens. Regenerate state in a
+dedicated local command or CI setup job. A feature test should report stale
+authentication, not silently log in again.
+
+Never print cookies, bearer tokens, credentials, or state-file contents in CI
+logs or artifacts.
+
+## Next steps
+
+- [Testing with PHPUnit](testing-with-phpunit.md): test lifecycle and failure
+  artifacts.
+- [Core concepts](core-concepts.md): contexts and their isolation boundary.

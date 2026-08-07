@@ -1,109 +1,143 @@
-# Getting Started with Playwright for PHP
+# Getting started with Playwright PHP
 
-Welcome to Playwright for PHP\! This guide will walk you through setting up your first project and running a basic
-browser automation script. Our goal is to get you up and running in just a few minutes.
+Playwright PHP drives real browsers from ordinary PHP. Install the package,
+install its browser binaries, then run one small script before adding it to a
+test suite.
 
 ## Requirements
 
-Before you begin, please ensure your development environment meets the following requirements:
+- PHP 8.2 or later;
+- Node.js 20 or later, used by the bundled Playwright server;
+- Composer.
 
-* **PHP 8.3+**
-* **Node.js 20+** (This is used by the underlying Playwright server)
-* **Composer** for managing PHP dependencies.
+Check the tools available to the project:
 
-## Installation
+```bash
+php --version
+node --version
+composer --version
+```
 
-Getting started with Playwright for PHP is a two-step process. First, you add the library to your project using
-Composer. Second, you run a command to download the necessary browser binaries.
+You do not write Node.js code. It runs the Playwright server that communicates
+with the browser.
 
-### Step 1: Install the Library
+## Install the package
 
-Navigate to your project's root directory and run the following Composer command:
+From the project root:
 
 ```bash
 composer require --dev playwright-php/playwright
 ```
 
-### Step 2: Install Browsers
+Composer creates `vendor/` and exposes the browser installer at
+`vendor/bin/playwright-install`.
 
-Playwright needs to download browser binaries (for Chromium, Firefox, and WebKit) to work. The library ships with a PHP
-installer that works the same for applications and for this repository. Run the following command from your project's
-root:
+## Install browser binaries
 
 ```bash
 vendor/bin/playwright-install --browsers
 ```
 
-Need Playwright to pull in recommended system dependencies as well (handy on fresh CI runners)?
+This installs Playwright's default browser set: Chromium, Firefox, and WebKit.
+They are Playwright-managed browser builds, not the Chrome, Edge, Firefox, or
+Safari applications already installed on the machine.
+
+The cache can also contain `chromium_headless_shell-*`. It is a companion
+Chromium executable used for headless runs, not a fourth browser engine or a
+separate browser choice.
+
+On a fresh Linux machine or CI runner, install the operating-system packages
+that those browsers need as well:
 
 ```bash
 vendor/bin/playwright-install --with-deps
 ```
 
-Both commands ensure the bundled Playwright server is up to date and then download the latest browser versions into the
-local Playwright cache.
+`--with-deps` implies `--browsers`. The installer accepts no browser-name
+arguments. Use its `--help` output as the authoritative list of supported
+options for the installed package version.
 
-If you need a custom browsers cache location (for example in CI), set `PLAYWRIGHT_BROWSERS_PATH`:
+### Use a project-specific browser cache
+
+Set `PLAYWRIGHT_BROWSERS_PATH` when the cache must live in a known location,
+for example in an isolated CI cache:
 
 ```bash
-PLAYWRIGHT_BROWSERS_PATH=/path/to/.playwright-browsers vendor/bin/playwright-install --browsers
+PLAYWRIGHT_BROWSERS_PATH="$PWD/var/playwright-browsers" \
+  vendor/bin/playwright-install --browsers
 ```
 
-## Your First Script
+Use the same variable when running the tests. Otherwise the PHP process and
+the installer may look in different browser-cache locations.
 
-You're now ready to write your first script. Create a new file named `example.php` and add the following code:
+## Run a first script
+
+Create `first-script.php` in the project root:
 
 ```php
 <?php
+
+declare(strict_types=1);
 
 require __DIR__.'/vendor/autoload.php';
 
 use Playwright\Playwright;
 
-// Start a new Playwright client and launch a browser.
-// By default, it launches a headless Chromium instance.
-$context = Playwright::chromium();
+use function Playwright\Testing\expect;
 
-// Create a new page within the browser context.
+$context = Playwright::chromium();
 $page = $context->newPage();
 
-// Navigate to a website.
 $page->goto('https://example.com');
 
-// Get the title of the page and print it to the console.
-echo $page->title() . PHP_EOL; // Outputs: "Example Domain"
+expect($page)->toHaveTitle('Example Domain');
+expect($page->getByRole('heading'))->toHaveText('Example Domain');
 
-// Take a screenshot and save it as 'screenshot.png'.
-$page->screenshot('screenshot.png');
+echo "OK\n";
 
-// Export the page to PDF on disk.
-$page->pdf('invoice.pdf', ['format' => 'A4']);
-
-// Or grab the PDF bytes directly without keeping files around.
-$pdfBytes = $page->pdfContent();
-file_put_contents('inline-invoice.pdf', $pdfBytes);
-
-// Close the browser context and all its pages.
 $context->close();
 ```
 
-To run the script, execute it from your terminal:
+Run it:
 
 ```bash
-php example.php
+php first-script.php
 ```
 
-You should see "Example Domain" printed to your console, and a `screenshot.png` file will be created in the same
-directory.
+Expected output:
 
-Congratulations, you've successfully run your first Playwright for PHP script\!
+```text
+OK
+```
 
-## What's Next?
+The script launches Chromium, opens a page, waits for the expected title and
+heading, then closes the browser context. `expect()` retries browser
+assertions until their condition is met or the assertion times out.
 
-Now that you have the library installed and running, you can explore its core concepts to understand how to build more
-complex and reliable automations.
+## Watch the browser while developing
 
-* **[Core Concepts](./core-concepts.md)**: Learn about the fundamental building blocks
-  of Playwright like Browsers, Contexts, Pages, and Locators.
-* **[Testing with PHPUnit](./testing-with-phpunit.md)**: See how to integrate Playwright
-  into your PHPUnit test suite for seamless end-to-end testing.
+Use a headed browser locally when you need to see the page:
+
+```php
+$context = Playwright::chromium(['headless' => false]);
+```
+
+Keep normal scripts headless unless visible browser UI is part of the scenario.
+
+## Troubleshooting the first run
+
+- If `vendor/bin/playwright-install` does not exist, run Composer from the
+  project root and confirm `playwright-php/playwright` is installed there.
+- If Node.js cannot be found, install Node.js 20 or later, then rerun the
+  installer.
+- If a browser cannot launch on Linux, rerun the installer with `--with-deps`.
+- If the first assertion times out, keep `https://example.com` until this
+  baseline succeeds. Only then point the script at the application.
+
+## Next steps
+
+- [Core concepts](core-concepts.md): browser, context, page, and locator.
+- [Testing with PHPUnit](testing-with-phpunit.md): move the script into a test
+  suite.
+- [Assertions](assertions-reference.md): choose a browser assertion that
+  describes the product result.
