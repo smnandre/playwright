@@ -1,81 +1,142 @@
-# Assertions Reference
+# Assertions
 
-Playwright for PHP includes a powerful assertion library accessible via the `expect()` function. This provides a fluent
-and expressive way to write checks in your tests.
+An assertion defines the outcome a test protects. Browser assertions should
+describe the result a user receives, not only the click or request that caused
+it.
 
-A key feature of these assertions is **auto-waiting**. When you write an assertion, Playwright will automatically wait
-for a reasonable amount of time for the condition to be met. This eliminates a major source of flaky tests.
+Playwright PHP has two browser assertion entry points:
 
-## Using `expect()`
+- `Playwright\Testing\expect()` for a `Page` or `Locator` outside PHPUnit;
+- `$this->expect()` in a `PlaywrightTestCase` or
+  `PlaywrightTestCaseTrait` test.
 
-The `expect()` function can be passed either a `Locator` or a `Page` object. It returns an assertion object that you can
-use to make claims about the state of your application.
+Both retry browser conditions. The default timeout is five seconds. Use PHPUnit
+assertions for values already read into PHP, and `Playwright\Assertions\Expect`
+for API responses.
+
+## Assert the product guarantee
+
+After an action, assert the result that matters to the user:
 
 ```php
 use function Playwright\Testing\expect;
 
-// Make an assertion about a locator
-expect($this->page->locator('h1'))->toHaveText('Welcome!');
+$page->getByRole('button', ['name' => 'Save'])->click();
 
-// Make an assertion about the page
-expect($this->page)->toHaveURL('https://my-app.com/dashboard');
+expect($page->getByRole('status'))->toHaveText('Saved');
 ```
 
------
+This is stronger than asserting that the button was clicked. A click is input;
+the status message is the product result.
 
-## Modifiers
+Prefer meaningful locators such as a heading, status region, row, or named
+button. If a control has no usable accessible name, fix the UI or add a
+deliberate test identifier rather than selecting incidental markup.
 
-You can alter the behavior of any assertion using these chainable modifier methods.
+## Assert page state
 
-### `.not()`
-
-The `.not()` modifier negates any assertion that follows it.
+Pass a `Page` when the contract is the route or document title:
 
 ```php
-// Assert that an element is not visible
-expect($this->page->locator('.loading-spinner'))->not()->toBeVisible();
-
-// Assert that a checkbox is not checked
-expect($this->page->locator('#terms-and-conditions'))->not()->toBeChecked();
+expect($page)->toHaveURL('https://app.example.test/dashboard');
+expect($page)->toHaveTitle('Dashboard');
 ```
 
-### `.withTimeout()`
-
-By default, assertions have a timeout of 5 seconds. You can override this for a specific assertion using
-`withTimeout()`.
+A URL alone rarely proves that a content-heavy page is ready. Pair it with a
+visible result:
 
 ```php
-// Wait up to 10 seconds for the success message to appear
-expect($this->page->locator('.success-message'))
-    ->withTimeout(10000)
+expect($page)->toHaveURL('https://app.example.test/dashboard');
+expect($page->getByRole('heading', ['name' => 'Dashboard']))->toBeVisible();
+```
+
+## Assert locator state
+
+Pass a `Locator` for visible UI state:
+
+```php
+expect($page->getByRole('heading', ['name' => 'Dashboard']))->toBeVisible();
+expect($page->getByRole('row'))->toHaveCount(3);
+expect($page->getByLabel('Email'))->toHaveValue('ada@example.test');
+```
+
+Use `toHaveText()` when the expected text may be part of a larger element.
+Use `toHaveExactText()` only when the exact text is the product contract.
+
+The available locator checks include visibility, enabled/disabled state,
+checked state, focus, text, value, attributes, CSS, and count. The PHP API
+reference is the authoritative method list for the installed version.
+
+## Use PHPUnit for PHP values
+
+Browser assertions help while the page is changing. Once a value has been read
+into PHP, use normal PHPUnit assertions:
+
+```php
+$email = $page->getByLabel('Email');
+$email->fill('ada@example.test');
+
+self::assertSame('ada@example.test', $email->inputValue());
+```
+
+This boundary is about timing. `inputValue()` reads now. `expect($locator)`
+waits until a browser condition is true or the timeout expires.
+
+## Assert direct API responses
+
+When the subject is an `APIResponse`, use the API assertion entry point:
+
+```php
+use Playwright\Assertions\Expect;
+
+$response = $context->request()->post('https://app.example.test/api/test/orders', [
+    'data' => ['product' => 'keyboard'],
+]);
+
+Expect::response($response)->toHaveStatus(201);
+Expect::response($response)->toBeOK();
+```
+
+API assertions are useful for setup and backend checks. If a feature has a UI,
+also assert the visible browser result.
+
+## Keep timeout exceptions local
+
+Document a slower product condition next to its assertion:
+
+```php
+expect($page->getByText('Report ready'))
+    ->withTimeout(15000)
     ->toBeVisible();
 ```
 
------
+Do not raise a global timeout because one report takes longer. Avoid fixed
+`sleep()` calls: they hide the condition the test is really waiting for.
 
-## Locator Assertions
+## Negative assertions need a positive result
 
-These assertions are available when you pass a `Locator` to `expect()`.
+An absence alone can be transient. Pair it with the state that replaces it:
 
-* **`toBeVisible()`**: Asserts the locator resolves to a visible element.
-* **`toBeHidden()`**: Asserts the locator resolves to a hidden element.
-* **`toBeEnabled()`**: Asserts the element is enabled.
-* **`toBeDisabled()`**: Asserts the element is disabled.
-* **`toBeChecked()`**: Asserts a checkbox or radio button is checked.
-* **`toBeFocused()`**: Asserts the element is focused.
-* **`toHaveText(string $text)`**: Asserts the element contains the given text.
-* **`toHaveExactText(string $text)`**: Asserts the element's text is an exact match.
-* **`toContainText(string $text)`**: An alias for `toHaveText()`.
-* **`toHaveValue(string $value)`**: Asserts an input element has a specific value.
-* **`toHaveAttribute(string $name, string $value)`**: Asserts the element has the given attribute and value.
-* **`toHaveCSS(string $name, string $value)`**: Asserts the element has the given computed CSS style.
-* **`toHaveCount(int $count)`**: Asserts the locator resolves to a specific number of elements.
+```php
+expect($page->getByText('Loading'))->not()->toBeVisible();
+expect($page->getByRole('heading', ['name' => 'Results']))->toBeVisible();
+```
 
------
+Use negative assertions for actual absence contracts, such as a dismissed
+dialog, removed row, or error message that must not be shown.
 
-## Page Assertions
+## Common mistakes
 
-These assertions are available when you pass a `Page` object to `expect()`.
+- Reading `textContent()` immediately after an action when a retrying locator
+  assertion expresses the intended wait.
+- Asserting generated IDs, CSS classes, or nested markup that users do not
+  observe.
+- Checking only a URL when the expected content can still be absent.
+- Raising a suite-wide timeout instead of explaining one exceptional wait.
+- Treating a negative assertion as proof of the final state.
 
-* **`toHaveURL(string $url)`**: Asserts the page's current URL is a match.
-* **`toHaveTitle(string $title)`**: Asserts the page's title is a match.
+## Next steps
+
+- [Testing with PHPUnit](testing-with-phpunit.md): browser-test lifecycle.
+- [Handling authentication](handling-authentication.md): isolated contexts and
+  saved state.
