@@ -157,7 +157,7 @@ final class APIRequestContext implements APIRequestContextInterface
 
     public function tracing(): TracingInterface
     {
-        return new Tracing($this->transport, $this->contextId);
+        return new Tracing($this->transport, $this->contextId, apiRequest: true);
     }
 
     public function dispose(): void

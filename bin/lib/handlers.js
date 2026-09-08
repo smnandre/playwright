@@ -159,7 +159,11 @@ class ContextHandler extends BaseHandler {
   }
 
   async handleTracing(command, method) {
-    const context = this.contexts.get(command.contextId)?.context ?? this.apiContexts.get(command.contextId);
+    // API requests share the browser context ID, but must target request.tracing.
+    const browserContext = this.contexts.get(command.contextId)?.context;
+    const context = browserContext
+      ? (command.apiRequest ? browserContext.request : browserContext)
+      : this.apiContexts.get(command.contextId);
 
     if (!context) {
       throw new Error(`Tracing context not found: ${command.contextId}`);
