@@ -15,6 +15,7 @@ declare(strict_types=1);
 namespace Playwright\Tests\Unit\Tracing;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Playwright\Tracing\Tracing;
 use Playwright\Transport\TransportInterface;
@@ -142,5 +143,38 @@ final class TracingTest extends TestCase
             ->willReturn([]);
 
         $this->tracing->groupEnd();
+    }
+
+    /**
+     * @param list<mixed> $arguments
+     */
+    #[DataProvider('apiTracingOperations')]
+    public function testEveryApiTracingOperationKeepsItsTarget(string $method, array $arguments, string $action): void
+    {
+        $this->transport->expects($this->once())
+            ->method('send')
+            ->with($this->callback(static fn (array $message): bool => $action === $message['action']
+                && 'context_1' === $message['contextId']
+                && true === ($message['apiRequest'] ?? false)
+            ))
+            ->willReturn([]);
+
+        $tracing = new Tracing($this->transport, 'context_1', apiRequest: true);
+        $tracing->$method(...$arguments);
+    }
+
+    /**
+     * @return iterable<string, array{string, list<mixed>, string}>
+     */
+    public static function apiTracingOperations(): iterable
+    {
+        yield 'start' => ['start', [], 'tracingStart'];
+        yield 'start chunk' => ['startChunk', [], 'tracingStartChunk'];
+        yield 'stop' => ['stop', [], 'tracingStop'];
+        yield 'stop chunk' => ['stopChunk', [], 'tracingStopChunk'];
+        yield 'start HAR' => ['startHar', ['/tmp/api.har'], 'tracingStartHar'];
+        yield 'stop HAR' => ['stopHar', [], 'tracingStopHar'];
+        yield 'group' => ['group', ['API call'], 'tracingGroup'];
+        yield 'group end' => ['groupEnd', [], 'tracingGroupEnd'];
     }
 }

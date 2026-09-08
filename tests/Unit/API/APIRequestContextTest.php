@@ -225,7 +225,7 @@ final class APIRequestContextTest extends TestCase
         $this->assertInstanceOf(TracingInterface::class, $this->context->tracing());
     }
 
-    public function testTracingTargetsTheSameContext(): void
+    public function testTracingTargetsTheApiRequestContext(): void
     {
         $this->transport->expects($this->once())
             ->method('send')
@@ -234,6 +234,7 @@ final class APIRequestContextTest extends TestCase
                 'contextId' => 'context_1',
                 'path' => '/tmp/api.har',
                 'options' => [],
+                'apiRequest' => true,
             ])
             ->willReturn([]);
 

@@ -15,12 +15,16 @@ declare(strict_types=1);
 namespace Playwright\Tests\Functional\Tracing;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use Playwright\API\APIRequest;
 use Playwright\API\APIRequestContext;
 use Playwright\Browser\BrowserContext;
+use Playwright\Configuration\PlaywrightConfig;
 use Playwright\Regex;
 use Playwright\Tests\Functional\FunctionalTestCase;
 use Playwright\Tracing\Options\StartHarOptions;
 use Playwright\Tracing\Tracing;
+use Playwright\Transport\TransportFactory;
+use Psr\Log\NullLogger;
 
 #[CoversClass(Tracing::class)]
 #[CoversClass(StartHarOptions::class)]
@@ -155,11 +159,87 @@ final class TracingApiTest extends FunctionalTestCase
         $this->assertStringContainsString('/index.html', json_encode($entries, \JSON_THROW_ON_ERROR));
     }
 
+    public function testStandaloneApiHarRecordingCapturesRequests(): void
+    {
+        $transport = (new TransportFactory())->create(new PlaywrightConfig(), new NullLogger());
+        $transport->connect();
+
+        try {
+            $request = (new APIRequest($transport))->newContext();
+            try {
+                $harPath = $this->tempDir.'/standalone.har';
+                $tracing = $request->tracing();
+                $tracing->startHar($harPath);
+                $response = $request->get($this->getBaseUrl().'/index.html');
+                $tracing->stopHar();
+
+                $this->assertSame(200, $response->status());
+                $this->assertStringContainsString('/index.html', json_encode($this->readHarEntries($harPath), \JSON_THROW_ON_ERROR));
+            } finally {
+                $request->dispose();
+            }
+        } finally {
+            $transport->disconnect();
+        }
+    }
+
+    public function testBrowserAndApiHarRecordingsKeepTheirRequests(): void
+    {
+        $browserHar = $this->tempDir.'/browser.har';
+        $apiHar = $this->tempDir.'/request.har';
+        $browserTracing = $this->context->tracing();
+        $request = $this->context->request();
+        $apiTracing = $request->tracing();
+
+        $browserTracing->startHar($browserHar);
+        $this->goto('/index.html');
+        $browserTracing->stopHar();
+
+        $apiTracing->startHar($apiHar);
+        $request->get($this->getBaseUrl().'/api/echo');
+        $apiTracing->stopHar();
+
+        $this->assertContains($this->getBaseUrl().'/api/echo', array_column(array_column($this->readHarEntries($apiHar), 'request'), 'url'));
+        $this->assertContains($this->getBaseUrl().'/index.html', array_column(array_column($this->readHarEntries($browserHar), 'request'), 'url'));
+    }
+
+    public function testApiTraceGroupsAndChunksKeepTheirEvents(): void
+    {
+        $browserPath = $this->tempDir.'/browser-trace.zip';
+        $apiPath = $this->tempDir.'/api-chunk.zip';
+        $browserTracing = $this->context->tracing();
+        $request = $this->context->request();
+        $apiTracing = $request->tracing();
+
+        $apiTracing->start();
+        $apiTracing->startChunk(['title' => 'API chunk']);
+        $apiTracing->group('api-only-step');
+        $request->get($this->getBaseUrl().'/api/echo');
+        $apiTracing->groupEnd();
+        $apiTracing->stopChunk(['path' => $apiPath]);
+        $apiTracing->stop();
+
+        $browserTracing->start();
+        $browserTracing->group('browser-only-step');
+        $this->goto('/index.html');
+        $browserTracing->groupEnd();
+        $browserTracing->stop(['path' => $browserPath]);
+
+        $apiEvents = $this->readTraceEvents($apiPath);
+        $browserEvents = $this->readTraceEvents($browserPath);
+        $this->assertStringContainsString('api-only-step', $apiEvents);
+        $this->assertStringContainsString('/api/echo', $apiEvents);
+        $this->assertStringNotContainsString('browser-only-step', $apiEvents);
+        $this->assertStringContainsString('browser-only-step', $browserEvents);
+        $this->assertStringNotContainsString('api-only-step', $browserEvents);
+    }
+
     /**
      * @return array<int, mixed>
      */
     private function readHarEntries(string $harPath): array
     {
+        $this->assertFileExists($harPath);
         $raw = file_get_contents($harPath);
         $this->assertIsString($raw);
 
@@ -175,6 +255,7 @@ final class TracingApiTest extends FunctionalTestCase
 
     private function readTraceEvents(string $zipPath): string
     {
+        $this->assertFileExists($zipPath);
         $zip = new \ZipArchive();
         $this->assertTrue($zip->open($zipPath));
 

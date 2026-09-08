@@ -26,13 +26,14 @@ final class Tracing implements TracingInterface
     public function __construct(
         private readonly TransportInterface $transport,
         private readonly string $contextId,
+        private readonly bool $apiRequest = false,
     ) {
     }
 
     public function start(array|StartOptions $options = []): void
     {
         $options = StartOptions::from($options);
-        $this->transport->send([
+        $this->send([
             'action' => 'tracingStart',
             'contextId' => $this->contextId,
             'options' => $options->toArray(),
@@ -42,7 +43,7 @@ final class Tracing implements TracingInterface
     public function startChunk(array|StartChunkOptions $options = []): void
     {
         $options = StartChunkOptions::from($options);
-        $this->transport->send([
+        $this->send([
             'action' => 'tracingStartChunk',
             'contextId' => $this->contextId,
             'options' => $options->toArray(),
@@ -52,7 +53,7 @@ final class Tracing implements TracingInterface
     public function stop(array|StopOptions $options = []): void
     {
         $options = StopOptions::from($options);
-        $this->transport->send([
+        $this->send([
             'action' => 'tracingStop',
             'contextId' => $this->contextId,
             'options' => $options->toArray(),
@@ -62,7 +63,7 @@ final class Tracing implements TracingInterface
     public function stopChunk(array|StopChunkOptions $options = []): void
     {
         $options = StopChunkOptions::from($options);
-        $this->transport->send([
+        $this->send([
             'action' => 'tracingStopChunk',
             'contextId' => $this->contextId,
             'options' => $options->toArray(),
@@ -72,7 +73,7 @@ final class Tracing implements TracingInterface
     public function startHar(string $path, array|StartHarOptions $options = []): void
     {
         $options = StartHarOptions::from($options);
-        $this->transport->send([
+        $this->send([
             'action' => 'tracingStartHar',
             'contextId' => $this->contextId,
             'path' => $path,
@@ -82,7 +83,7 @@ final class Tracing implements TracingInterface
 
     public function stopHar(): void
     {
-        $this->transport->send([
+        $this->send([
             'action' => 'tracingStopHar',
             'contextId' => $this->contextId,
         ]);
@@ -99,14 +100,26 @@ final class Tracing implements TracingInterface
             $payload['location'] = $location;
         }
 
-        $this->transport->send($payload);
+        $this->send($payload);
     }
 
     public function groupEnd(): void
     {
-        $this->transport->send([
+        $this->send([
             'action' => 'tracingGroupEnd',
             'contextId' => $this->contextId,
         ]);
+    }
+
+    /**
+     * @param array<string, mixed> $message
+     */
+    private function send(array $message): void
+    {
+        if ($this->apiRequest) {
+            $message['apiRequest'] = true;
+        }
+
+        $this->transport->send($message);
     }
 }
